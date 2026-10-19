@@ -24,11 +24,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build plugin
-        run: gradle -p NL-Universe-LootChests-source build --no-daemon
+  working-directory: NL-Universe-LootChests-source
+  run: gradle build --no-daemon
 
       - name: Upload plugin JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: NL-Universe-LootChests
-          path: NL-Universe-LootChests-source/build/libs/*.jar
-          if-no-files-found: error
+  uses: actions/upload-artifact@v4
+  with:
+    name: NL-Universe-LootChests
+    path: NL-Universe-LootChests-source/build/libs/*.jar
+    if-no-files-found: error
