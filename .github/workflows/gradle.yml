@@ -23,13 +23,27 @@ jobs:
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Find Gradle project
+        id: project
+        shell: bash
+        run: |
+          echo "Available Gradle files:"
+          find . -name build.gradle -o -name settings.gradle
+          BUILD_FILE=$(find . -name build.gradle -type f -print -quit)
+          if [ -z "$BUILD_FILE" ]; then
+            echo "::error::No build.gradle found"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$BUILD_FILE")
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Project directory: $PROJECT_DIR"
+
       - name: Build plugin
-        working-directory: NL-Universe-LootChests-source
-        run: gradle build --no-daemon
+        run: gradle -p "${{ steps.project.outputs.dir }}" build --no-daemon
 
       - name: Upload plugin JAR
         uses: actions/upload-artifact@v4
         with:
           name: NL-Universe-LootChests
-          path: NL-Universe-LootChests-source/build/libs/*.jar
+          path: '**/build/libs/*.jar'
           if-no-files-found: error
