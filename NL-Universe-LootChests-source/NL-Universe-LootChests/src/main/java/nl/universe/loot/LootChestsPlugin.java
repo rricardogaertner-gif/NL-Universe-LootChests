@@ -57,38 +57,79 @@ public final class LootChestsPlugin extends JavaPlugin implements Listener {
             return new Location(world, Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(a[2]));
         } catch (Exception e) { return null; }
     }
+    // Version 1.1: ONLY inspect chunks that Minecraft has already loaded.
+    // Never use getHighestBlockYAt on an unloaded chunk: it may trigger chunk generation.
     private void spawnIn(World world) {
         Set<String> keys = active.computeIfAbsent(world.getName(), n -> new HashSet<>());
         if (keys.size() >= Math.max(1, getConfig().getInt("max-active-per-world", 5))) return;
+
         int min = Math.max(1, getConfig().getInt("min-distance", 500));
         int max = Math.max(min, getConfig().getInt("max-distance", 900));
+        int attempts = Math.max(1, Math.min(40, getConfig().getInt("spawn-search-attempts", 30)));
         List<Location> existing = new ArrayList<>();
-        for (String s : keys) { Location loc = parse(world, s); if (loc != null) existing.add(loc); }
-        List<Location> anchors = new ArrayList<>();
-        if (!existing.isEmpty()) anchors.addAll(existing);
-        else for (Player p : world.getPlayers()) anchors.add(p.getLocation());
-        if (anchors.isEmpty()) return;
-        int attempts = Math.max(1, Math.min(300, getConfig().getInt("spawn-search-attempts", 90)));
-        for (int i = 0; i < attempts; i++) {
-            Location anchor = anchors.get(random.nextInt(anchors.size()));
-            double angle = random.nextDouble() * Math.PI * 2;
-            double distance = min + random.nextDouble() * (max - min);
-            int x = anchor.getBlockX() + (int)Math.round(Math.cos(angle) * distance);
-            int z = anchor.getBlockZ() + (int)Math.round(Math.sin(angle) * distance);
-            if (!world.getWorldBorder().isInside(new Location(world, x, world.getSeaLevel(), z))) continue;
-            boolean validDistance = true;
-            for (Location other : existing) {
-                double d = Math.hypot(x - other.getX(), z - other.getZ());
-                if (d < min) { validDistance = false; break; }
+        for (String s : keys) {
+            Location loc = parse(world, s);
+            if (loc != null) existing.add(loc);
+        }
+
+        // A player must be present. The first chest can appear in any loaded
+        // chunk near a player. Later chests must be 500-900 blocks from at
+        // least one existing chest and at least 500 from all existing chests.
+        if (world.getPlayers().isEmpty()) return;
+        Chunk[] loaded = world.getLoadedChunks();
+        if (loaded.length == 0) return;
+        List<Chunk> candidates = new ArrayList<>();
+        for (Chunk chunk : loaded) {
+            int cx = chunk.getX() * 16 + 8;
+            int cz = chunk.getZ() * 16 + 8;
+            if (existing.isEmpty()) {
+                boolean nearPlayer = false;
+                for (Player player : world.getPlayers()) {
+                    if (Math.hypot(cx - player.getLocation().getX(), cz - player.getLocation().getZ()) <= 160) {
+                        nearPlayer = true;
+                        break;
+                    }
+                }
+                if (nearPlayer) candidates.add(chunk);
+            } else {
+                boolean inRange = false;
+                for (Location other : existing) {
+                    double distance = Math.hypot(cx - other.getX(), cz - other.getZ());
+                    if (distance >= min - 12 && distance <= max + 12) {
+                        inRange = true;
+                        break;
+                    }
+                }
+                if (inRange) candidates.add(chunk);
             }
-            if (!validDistance) continue;
+        }
+        if (candidates.isEmpty()) return;
+
+        for (int i = 0; i < attempts; i++) {
+            Chunk chunk = candidates.get(random.nextInt(candidates.size()));
+            int x = chunk.getX() * 16 + random.nextInt(16);
+            int z = chunk.getZ() * 16 + random.nextInt(16);
+            if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
+            if (!world.getWorldBorder().isInside(new Location(world, x, world.getSeaLevel(), z))) continue;
+
+            if (!existing.isEmpty()) {
+                boolean withinMax = false;
+                boolean tooClose = false;
+                for (Location other : existing) {
+                    double distance = Math.hypot(x - other.getX(), z - other.getZ());
+                    if (distance < min) { tooClose = true; break; }
+                    if (distance <= max) withinMax = true;
+                }
+                if (tooClose || !withinMax) continue;
+            }
+
+            // Safe because this chunk is already loaded.
             int y = world.getHighestBlockYAt(x, z);
             if (y <= world.getMinHeight() + 1 || y >= world.getMaxHeight() - 2) continue;
             Block floor = world.getBlockAt(x, y - 1, z);
             Block target = world.getBlockAt(x, y, z);
             Block above = world.getBlockAt(x, y + 1, z);
             if (!floor.getType().isSolid() || floor.isLiquid() || !target.getType().isAir() || !above.getType().isAir()) continue;
-            // Avoid placing on leaves, buildings, water, or player-placed-looking surfaces.
             if (!Set.of(Material.GRASS_BLOCK, Material.DIRT, Material.COARSE_DIRT, Material.PODZOL,
                     Material.MYCELIUM, Material.SAND, Material.RED_SAND, Material.STONE,
                     Material.SNOW_BLOCK, Material.GRAVEL, Material.MOSS_BLOCK).contains(floor.getType())) continue;
@@ -101,7 +142,7 @@ public final class LootChestsPlugin extends JavaPlugin implements Listener {
                 Bukkit.broadcastMessage(ChatColor.GOLD + "[NL-Universe] Er is een mysterieuze lootkist verschenen in " + world.getName() + "!");
             return;
         }
-        getLogger().fine("No safe loot chest position found in " + world.getName());
+        getLogger().fine("No suitable loaded chunk found in " + world.getName());
     }
     private void populate(Chest chest) {
         List<ItemStack> rewards = new ArrayList<>();
@@ -147,6 +188,7 @@ public final class LootChestsPlugin extends JavaPlugin implements Listener {
         Set<String> keys = active.get(loc.getWorld().getName());
         if (keys == null || !keys.contains(key(loc))) return;
         Bukkit.getScheduler().runTask(this, () -> {
+            if (!loc.getWorld().isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return;
             if (!(loc.getBlock().getState() instanceof Chest current)) {
                 keys.remove(key(loc)); saveLocations(); return;
             }
