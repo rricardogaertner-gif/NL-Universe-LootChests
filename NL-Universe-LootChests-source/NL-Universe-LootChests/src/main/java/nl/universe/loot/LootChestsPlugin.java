@@ -167,16 +167,18 @@ public final class LootChestsPlugin extends JavaPlugin implements Listener {
                     return;
                 }
 
-                int y = world.getHighestBlockYAt(x, z);
+                
+                    int groundY = world.getHighestBlockYAt(x, z);
+                    int y = groundY + 1;
 
                 if (y <= world.getMinHeight() + 1 || y >= world.getMaxHeight() - 2) {
                     later(world, sender, anchors, attempt + 1, maxAttempts);
                     return;
                 }
 
-                Block floor = world.getBlockAt(x, y - 1, z);
-                Block target = world.getBlockAt(x, y, z);
-                Block above = world.getBlockAt(x, y + 1, z);
+Block floor = world.getBlockAt(x, groundY, z);
+Block target = world.getBlockAt(x, y, z);
+Block above = world.getBlockAt(x, y + 1, z);
 
                 if (!floor.getType().isSolid()
                         || floor.isLiquid()
